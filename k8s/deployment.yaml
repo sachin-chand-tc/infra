@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insta-scraper-backend
+  labels:
+    app: insta-scraper-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: insta-scraper-backend
+  template:
+    metadata:
+      labels:
+        app: insta-scraper-backend
+    spec:
+      containers:
+      - name: server
+        image: gcr.io/PROJECT_ID/insta-scraper-backend:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: grpc
+          protocol: TCP
+        env:
+        - name: HTTP_PORT
+          value: "8080"
+        - name: GRPC_PORT
+          value: "9090"
+        - name: ENVIRONMENT
+          value: "production"
+        - name: FIREBASE_PROJECT_ID
+          valueFrom:
+            secretKeyRef:
+              name: firebase-config
+              key: project-id
+              optional: true
+        - name: FIREBASE_CREDENTIALS
+          value: "/etc/firebase/credentials.json"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: firebase-credentials
+          mountPath: /etc/firebase
+          readOnly: true
+      volumes:
+      - name: firebase-credentials
+        secret:
+          secretName: firebase-credentials
+          optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: insta-scraper-backend
+  labels:
+    app: insta-scraper-backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: grpc
+  selector:
+    app: insta-scraper-backend
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: insta-scraper-backend-lb
+  labels:
+    app: insta-scraper-backend
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: grpc
+  selector:
+    app: insta-scraper-backend

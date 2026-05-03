@@ -1,0 +1,114 @@
+name: CI/CD — Backend Server
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  GO_VERSION: '1.24'
+  PROJECT_ID: starkindustries-og
+  SERVICE_NAME: feedseeker-website
+  REGION: asia-northeast1
+  IMAGE: gcr.io/starkindustries-og/feedseeker-website
+
+jobs:
+  # ── Test job runs against the app source code ──────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out app code
+      uses: actions/checkout@v4
+      with:
+        repository: sachin-chand-tc/insta-scraper-backend
+        token: ${{ secrets.PAT_TOKEN }}
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Build
+      run: go build ./...
+
+    - name: Run tests
+      run: go test -v ./...
+
+  # ── Deploy job builds Docker image using infra Dockerfile ──
+  deploy:
+    name: Build, Push & Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - name: Check out infra repo
+      uses: actions/checkout@v4
+      # This is the infra repo itself (already checked out by default)
+
+    - name: Check out app code into ./app
+      uses: actions/checkout@v4
+      with:
+        repository: sachin-chand-tc/insta-scraper-backend
+        token: ${{ secrets.PAT_TOKEN }}
+        path: app
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker
+
+    - name: Build and push Docker image
+      run: |
+        # Build using the Dockerfile from infra, app source from ./app
+        docker build \
+          -f Dockerfile \
+          -t ${{ env.IMAGE }}:${{ github.sha }} \
+          -t ${{ env.IMAGE }}:latest \
+          ./app
+        docker push ${{ env.IMAGE }}:${{ github.sha }}
+        docker push ${{ env.IMAGE }}:latest
+
+    - name: Deploy to Cloud Run
+      run: |
+        bash ./deploy-backend.sh
+
+    - name: Get service URL
+      id: url
+      run: |
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+          --platform managed \
+          --region ${{ env.REGION }} \
+          --project ${{ env.PROJECT_ID }} \
+          --format 'value(status.url)')
+        echo "url=$SERVICE_URL" >> $GITHUB_OUTPUT
+        echo "Service URL: $SERVICE_URL"
+
+    - name: Verify deployment
+      run: |
+        sleep 5
+        curl -f ${{ steps.url.outputs.url }}/health
+        echo "✅ Deployment successful!"
