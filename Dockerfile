@@ -1,8 +1,8 @@
 # Build stage
 FROM golang:1.24-alpine AS builder
 
-# Install build dependencies
-RUN apk add --no-cache git protobuf-dev
+# Install only the dependencies required for module download and build.
+RUN apk add --no-cache git
 
 WORKDIR /app
 
@@ -15,8 +15,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application statically
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -ldflags="-w -s" -o /app/server ./cmd/server
+# Build the application statically without forcing a full rebuild on every deploy.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s" -o /app/server ./cmd/server
 
 # Final stage: distroless
 # Using static-debian12 as it contains SSL certificates and tzdata but no shell/package manager.

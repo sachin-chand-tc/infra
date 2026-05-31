@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars and fill in your values.
+# NEVER commit terraform.tfvars — it contains secrets.
+
+gcp_project_id    = "starkindustries-og"
+region            = "asia-northeast1"
+cloud_run_service = "feedseeker-website"
+
+# Get from: Cloudflare Dashboard → My Profile → API Tokens
+# Create a token with: Zone:DNS:Edit + Zone:Zone:Read for all zones
+cloudflare_api_token = "<your-cloudflare-api-token>"

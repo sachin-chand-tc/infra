@@ -1,4 +1,5 @@
-.PHONY: help proto build test run docker-build docker-push deploy-cloudrun clean
+.PHONY: help proto build test run docker-build docker-push deploy-cloudrun clean \
+        tf-init tf-plan tf-apply tf-destroy
 
 # Variables
 PROJECT_ID ?= your-gcp-project-id
@@ -39,14 +40,27 @@ docker-push: docker-build ## Push Docker image to GCR
 	@echo "Pushing Docker image to GCR..."
 	docker push $(IMAGE_NAME):$(VERSION)
 
-deploy-cloudrun: docker-push ## Deploy to Google Cloud Run
+deploy-cloudrun: ## Deploy to Google Cloud Run via infra Cloud Build pipeline
 	@echo "Deploying to Cloud Run..."
-	../infra/deploy-backend.sh
+	GCP_PROJECT_ID=$(PROJECT_ID) ../infra/deploy-backend.sh
 
 clean: ## Clean build artifacts
 	@echo "Cleaning..."
 	rm -rf bin/
 	go clean
+
+# ── OpenTofu (infrastructure) ─────────────────────────────────────────────────
+tf-init: ## Init OpenTofu — install providers (run once)
+	@cd terraform && tofu init
+
+tf-plan: ## Preview infra changes without applying
+	@cd terraform && tofu plan
+
+tf-apply: ## Apply infra changes (idempotent — safe to re-run)
+	@cd terraform && tofu apply
+
+tf-destroy: ## Destroy all managed infra (destructive — ask first)
+	@cd terraform && tofu destroy
 
 lint: ## Run linter
 	@echo "Running linter..."

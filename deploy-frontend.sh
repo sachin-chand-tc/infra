@@ -7,7 +7,8 @@
 #
 # Usage:
 #   ./deploy-frontend.sh --site apnijodi
-#   ./deploy-frontend.sh --site sachside --redeploy
+#   ./deploy-frontend.sh --site planner --redeploy
+#   ./deploy-frontend.sh --site sachins --redeploy
 #   ./deploy-frontend.sh --site instascraper --dry-run
 #
 # Flags:
@@ -84,19 +85,19 @@ fi
 # ── Create tarball ───────────────────────────────────────────────
 echo -e "${BLUE}Creating archive...${NC}"
 TMPFILE=$(mktemp /tmp/webinputs-${SITE_NAME}-XXXXXX.tar.gz)
-trap "rm -f '$TMPFILE'" EXIT
+TMPSTAGE=$(mktemp -d /tmp/webinputs-stage-XXXXXX)
+trap "rm -f '$TMPFILE'; rm -rf '$TMPSTAGE'" EXIT
 
-tar -czf "$TMPFILE" \
-  --exclude='.DS_Store' \
-  --exclude='.git' \
-  --exclude='.github' \
-  --exclude='node_modules' \
-  --exclude='infra' \
-  --exclude='*.md' \
-  --exclude='*.sh' \
-  --exclude='firebase.json' \
-  --exclude='firestore.rules' \
-  -C "$SITE_DIR" .
+# Copy site files to root of staging dir
+rsync -a --exclude='.DS_Store' --exclude='.git' --exclude='node_modules' \
+  --exclude='*.md' --exclude='*.sh' --exclude='firebase.json' --exclude='firestore.rules' \
+  "$SITE_DIR/" "$TMPSTAGE/"
+
+# Copy common/ as a subfolder so imports like ../common/auth/google.js resolve correctly
+rsync -a --exclude='.DS_Store' --exclude='.git' --exclude='node_modules' \
+  "$WEBINPUTS_ROOT/common/" "$TMPSTAGE/common/"
+
+tar -czf "$TMPFILE" -C "$TMPSTAGE" .
 
 FILESIZE=$(du -h "$TMPFILE" | cut -f1)
 echo -e "${GREEN}✓ Archive: ${FILESIZE}${NC}"

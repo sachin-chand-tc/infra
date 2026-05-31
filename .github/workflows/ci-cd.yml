@@ -11,7 +11,6 @@ env:
   PROJECT_ID: starkindustries-og
   SERVICE_NAME: feedseeker-website
   REGION: asia-northeast1
-  IMAGE: gcr.io/starkindustries-og/feedseeker-website
 
 jobs:
   # ── Test job runs against the app source code ──────────────
@@ -78,22 +77,14 @@ jobs:
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
 
-    - name: Configure Docker for GCR
-      run: gcloud auth configure-docker
-
-    - name: Build and push Docker image
+    - name: Deploy via shared script
       run: |
-        # Build using the Dockerfile from infra, app source from ./app
-        docker build \
-          -f Dockerfile \
-          -t ${{ env.IMAGE }}:${{ github.sha }} \
-          -t ${{ env.IMAGE }}:latest \
-          ./app
-        docker push ${{ env.IMAGE }}:${{ github.sha }}
-        docker push ${{ env.IMAGE }}:latest
-
-    - name: Deploy to Cloud Run
-      run: |
+        APP_ROOT="$GITHUB_WORKSPACE/app" \
+        GCP_PROJECT_ID="${{ env.PROJECT_ID }}" \
+        CLOUD_RUN_SERVICE="${{ env.SERVICE_NAME }}" \
+        REGION="${{ env.REGION }}" \
+        IMAGE_TAG="${{ github.sha }}" \
+        QUIET=true \
         bash ./deploy-backend.sh
 
     - name: Get service URL
@@ -109,6 +100,5 @@ jobs:
 
     - name: Verify deployment
       run: |
-        sleep 5
         curl -f ${{ steps.url.outputs.url }}/health
         echo "✅ Deployment successful!"
