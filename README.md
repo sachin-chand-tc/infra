@@ -104,6 +104,7 @@ fresh files immediately.
 | `planner` | planner.sachside.com (also app.sachside.com) |
 | `sachins` | sachins.sachside.com |
 | `instascraper` | feedseeker.com |
+| `qrit` | qrit.com |
 
 ### Deploy a site (basic)
 
@@ -127,7 +128,7 @@ cd ~/code/repos/infra
 ### Deploy all sites at once
 
 ```bash
-for site in apnijodi planner sachins instascraper; do
+for site in apnijodi planner sachins instascraper qrit; do
   ./deploy-frontend.sh --site "$site" --redeploy
 done
 ```
