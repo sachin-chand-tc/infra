@@ -31,6 +31,7 @@ GCP_PROJECT_ID="${GCP_PROJECT_ID:-starkindustries-og}"
 GCS_BUCKET="${GCS_BUCKET:-starkindustries-og-static-an1}"
 CLOUD_RUN_SERVICE="${CLOUD_RUN_SERVICE:-feedseeker-website}"
 REGION="${REGION:-asia-northeast1}"
+MAX_ARCHIVE_MB="${MAX_ARCHIVE_MB:-150}"
 
 SITE_NAME=""
 REDEPLOY=false
@@ -54,7 +55,11 @@ fi
 
 # ── Resolve paths ────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WEBINPUTS_ROOT="$(cd "$SCRIPT_DIR/../webinputs" && pwd)"
+if [[ -n "${WEBINPUTS_ROOT:-}" ]]; then
+  WEBINPUTS_ROOT="$(cd "$WEBINPUTS_ROOT" && pwd)"
+else
+  WEBINPUTS_ROOT="$(cd "$SCRIPT_DIR/../webinputs" && pwd)"
+fi
 SITE_DIR="$WEBINPUTS_ROOT/$SITE_NAME"
 
 ARCHIVE_NAME="${SITE_NAME}.tar.gz"
@@ -64,6 +69,17 @@ if [[ ! -d "$SITE_DIR" ]]; then
   echo -e "${RED}Error: site not found: ${SITE_DIR}${NC}"
   echo "  Available sites:"
   ls -d "$WEBINPUTS_ROOT"/*/  2>/dev/null | xargs -I{} basename {} | grep -v infra | sed 's/^/    /'
+  exit 1
+fi
+
+if grep -R --line-number --exclude-dir=.git --exclude-dir=node_modules '<<<<<<< \|=======\|>>>>>>> ' "$SITE_DIR" >/dev/null 2>&1; then
+  echo -e "${RED}Error: merge conflict markers detected under ${SITE_DIR}${NC}"
+  exit 1
+fi
+
+if find "$SITE_DIR" -type f \( -name '*.mov' -o -name '*.MOV' -o -name '*.mp4' -o -name '*.MP4' \) | grep -q .; then
+  echo -e "${RED}Error: video artifacts detected in ${SITE_NAME}. Remove media artifacts before deploy.${NC}"
+  find "$SITE_DIR" -type f \( -name '*.mov' -o -name '*.MOV' -o -name '*.mp4' -o -name '*.MP4' \) | sed 's/^/  - /'
   exit 1
 fi
 
@@ -90,17 +106,28 @@ trap "rm -f '$TMPFILE'; rm -rf '$TMPSTAGE'" EXIT
 
 # Copy site files to root of staging dir
 rsync -a --exclude='.DS_Store' --exclude='.git' --exclude='node_modules' \
+  --exclude='*.mov' --exclude='*.MOV' --exclude='*.mp4' --exclude='*.MP4' \
+  --exclude='*.zip' --exclude='*.tar' --exclude='*.tar.gz' --exclude='*.tgz' \
+  --exclude='assets/artifacts' \
   --exclude='*.md' --exclude='*.sh' --exclude='firebase.json' --exclude='firestore.rules' \
   "$SITE_DIR/" "$TMPSTAGE/"
 
 # Copy common/ as a subfolder so imports like ../common/auth/google.js resolve correctly
 rsync -a --exclude='.DS_Store' --exclude='.git' --exclude='node_modules' \
+  --exclude='*.mov' --exclude='*.MOV' --exclude='*.mp4' --exclude='*.MP4' \
+  --exclude='assets/artifacts' \
   "$WEBINPUTS_ROOT/common/" "$TMPSTAGE/common/"
 
 tar -czf "$TMPFILE" -C "$TMPSTAGE" .
 
 FILESIZE=$(du -h "$TMPFILE" | cut -f1)
 echo -e "${GREEN}✓ Archive: ${FILESIZE}${NC}"
+
+ARCHIVE_SIZE_MB=$(du -m "$TMPFILE" | cut -f1)
+if [[ "$ARCHIVE_SIZE_MB" -gt "$MAX_ARCHIVE_MB" ]]; then
+  echo -e "${RED}Error: archive size ${ARCHIVE_SIZE_MB}MB exceeds MAX_ARCHIVE_MB=${MAX_ARCHIVE_MB}${NC}"
+  exit 1
+fi
 
 # ── Upload ───────────────────────────────────────────────────────
 if [[ "$DRY_RUN" == "true" ]]; then
