@@ -28,6 +28,17 @@ on:
       PAT_TOKEN:
         required: true
 
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-publish-${{ inputs.site }}-${{ inputs.webinputs_ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
 env:
   GCP_PROJECT_ID: starkindustries-og
   GCS_BUCKET: starkindustries-og-static-an1
@@ -38,6 +49,7 @@ jobs:
   verify:
     name: Verify Inputs + Site Integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Validate requested site
         run: |
@@ -56,6 +68,15 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ inputs.webinputs_ref }}
           path: webinputs
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify site directory exists
+        run: |
+          if [[ ! -d "webinputs/${{ inputs.site }}" ]]; then
+            echo "Missing site directory: webinputs/${{ inputs.site }}"
+            exit 1
+          fi
 
       - name: Check for merge markers
         run: |
@@ -85,12 +106,30 @@ jobs:
     name: Publish ${{ inputs.site }}
     needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: read
       id-token: write
     steps:
+      - name: Preflight required secrets
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -z "${GCP_SA_KEY}" ]] && missing+=("GCP_SA_KEY")
+          [[ -z "${PAT_TOKEN}" ]] && missing+=("PAT_TOKEN")
+          if (( ${#missing[@]} > 0 )); then
+            echo "Missing required workflow_call secret(s): ${missing[*]}"
+            exit 1
+          fi
+
       - name: Checkout infra
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Checkout webinputs
         uses: actions/checkout@v4
@@ -99,6 +138,8 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ inputs.webinputs_ref }}
           path: webinputs
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -107,6 +148,14 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify cloud tooling and auth
+        run: |
+          set -euo pipefail
+          gcloud --version
+          gsutil version -l | head -n 5
+          gcloud config set project "${GCP_PROJECT_ID}"
+          gcloud auth list
 
       - name: Make deploy script executable
         run: chmod +x ./deploy-frontend.sh
@@ -130,6 +179,7 @@ jobs:
           ./deploy-frontend.sh --site "${{ inputs.site }}" "${EXTRA_FLAGS[@]}"
 
       - name: Deployment summary
+        if: success()
         run: |
           {
             echo "## Frontend Publish"
