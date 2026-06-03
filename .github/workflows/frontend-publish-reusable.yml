@@ -31,6 +31,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   group: frontend-publish-${{ inputs.site }}-${{ inputs.webinputs_ref }}
   cancel-in-progress: false
