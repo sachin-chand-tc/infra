@@ -131,6 +131,10 @@ jobs:
       - name: Checkout infra
         uses: actions/checkout@v4
         with:
+          repository: sachin-chand-tc/infra
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: main
+          path: infra
           fetch-depth: 1
           persist-credentials: false
 
@@ -161,7 +165,7 @@ jobs:
           gcloud auth list
 
       - name: Make deploy script executable
-        run: chmod +x ./deploy-frontend.sh
+        run: chmod +x ./infra/deploy-frontend.sh
 
       - name: Deploy site with shared script
         env:
@@ -179,7 +183,7 @@ jobs:
           if [[ "${{ inputs.dry_run }}" == "true" ]]; then
             EXTRA_FLAGS+=(--dry-run)
           fi
-          ./deploy-frontend.sh --site "${{ inputs.site }}" "${EXTRA_FLAGS[@]}"
+          ./infra/deploy-frontend.sh --site "${{ inputs.site }}" "${EXTRA_FLAGS[@]}"
 
       - name: Deployment summary
         if: success()
