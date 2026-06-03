@@ -31,9 +31,6 @@ on:
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 concurrency:
   group: frontend-publish-${{ inputs.site }}-${{ inputs.webinputs_ref }}
   cancel-in-progress: false
@@ -43,6 +40,7 @@ defaults:
     shell: bash
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   GCP_PROJECT_ID: starkindustries-og
   GCS_BUCKET: starkindustries-og-static-an1
   CLOUD_RUN_SERVICE: feedseeker-website
