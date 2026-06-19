@@ -144,11 +144,34 @@ echo -e "${GREEN}✓ Upload complete${NC}"
 if [[ "$REDEPLOY" == "true" ]]; then
   echo ""
   echo -e "${BLUE}Redeploying Cloud Run: ${CLOUD_RUN_SERVICE} (${REGION})...${NC}"
-  gcloud run services update "$CLOUD_RUN_SERVICE" \
-    --project="$GCP_PROJECT_ID" \
-    --region="$REGION" \
-    --update-env-vars="DEPLOY_TIMESTAMP=$(date +%s)" \
-    --quiet
+  max_attempts=6
+  attempt=1
+  while true; do
+    set +e
+    update_output=$(gcloud run services update "$CLOUD_RUN_SERVICE" \
+      --project="$GCP_PROJECT_ID" \
+      --region="$REGION" \
+      --update-env-vars="DEPLOY_TIMESTAMP=$(date +%s)" \
+      --quiet 2>&1)
+    update_code=$?
+    set -e
+
+    if [[ $update_code -eq 0 ]]; then
+      echo "$update_output"
+      break
+    fi
+
+    if echo "$update_output" | grep -q "ABORTED: Conflict for resource" && [[ $attempt -lt $max_attempts ]]; then
+      sleep_seconds=$((attempt * 4))
+      echo -e "${YELLOW}Cloud Run update conflict detected (attempt ${attempt}/${max_attempts}). Retrying in ${sleep_seconds}s...${NC}"
+      attempt=$((attempt + 1))
+      sleep "$sleep_seconds"
+      continue
+    fi
+
+    echo "$update_output"
+    exit $update_code
+  done
   echo -e "${GREEN}✓ Cloud Run redeployed — fetching fresh files${NC}"
 else
   echo ""
