@@ -72,7 +72,7 @@ if [[ ! -d "$SITE_DIR" ]]; then
   exit 1
 fi
 
-if grep -R --line-number --exclude-dir=.git --exclude-dir=node_modules '<<<<<<< \|=======\|>>>>>>> ' "$SITE_DIR" >/dev/null 2>&1; then
+if grep -R --line-number --exclude-dir=.git --exclude-dir=node_modules -E '^(<<<<<<< |=======|>>>>>>> )' "$SITE_DIR" >/dev/null 2>&1; then
   echo -e "${RED}Error: merge conflict markers detected under ${SITE_DIR}${NC}"
   exit 1
 fi

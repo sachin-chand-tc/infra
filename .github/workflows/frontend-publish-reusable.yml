@@ -101,7 +101,7 @@ jobs:
 
       - name: Check for merge markers
         run: |
-          if grep -R --line-number --exclude-dir=.git --exclude-dir=node_modules '<<<<<<< \|=======\|>>>>>>>' "webinputs/${{ inputs.site }}"; then
+          if grep -R --line-number --exclude-dir=.git --exclude-dir=node_modules -E '^(<<<<<<< |=======|>>>>>>> )' "webinputs/${{ inputs.site }}"; then
             echo "Merge conflict markers detected"
             exit 1
           fi
