@@ -7,6 +7,26 @@ on:
         description: Site folder under webinputs/
         required: true
         type: string
+      gcp_project_id:
+        description: GCP project ID used for upload and redeploy
+        required: false
+        default: starkindustries-og
+        type: string
+      gcs_bucket:
+        description: GCS bucket containing frontend tarballs
+        required: false
+        default: starkindustries-og-static-an1
+        type: string
+      cloud_run_service:
+        description: Cloud Run service that serves frontend assets
+        required: false
+        default: feedseeker-website
+        type: string
+      region:
+        description: GCP region for Cloud Run service
+        required: false
+        default: asia-northeast1
+        type: string
       webinputs_ref:
         description: Git ref to deploy from webinputs repo
         required: false
@@ -41,10 +61,10 @@ defaults:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  GCP_PROJECT_ID: starkindustries-og
-  GCS_BUCKET: starkindustries-og-static-an1
-  CLOUD_RUN_SERVICE: feedseeker-website
-  REGION: asia-northeast1
+  GCP_PROJECT_ID: ${{ inputs.gcp_project_id }}
+  GCS_BUCKET: ${{ inputs.gcs_bucket }}
+  CLOUD_RUN_SERVICE: ${{ inputs.cloud_run_service }}
+  REGION: ${{ inputs.region }}
 
 jobs:
   verify:
@@ -161,6 +181,23 @@ jobs:
           gsutil version -l | head -n 5
           gcloud config set project "${GCP_PROJECT_ID}"
           gcloud auth list
+
+      - name: Preflight billing state
+        run: |
+          set -euo pipefail
+          echo "Checking billing state for project ${GCP_PROJECT_ID}"
+          if billing_line=$(gcloud beta billing projects describe "${GCP_PROJECT_ID}" --format='value(billingEnabled,billingAccountName)' 2>/dev/null); then
+            billing_enabled=$(echo "${billing_line}" | awk '{print $1}')
+            billing_account=$(echo "${billing_line}" | awk '{print $2}')
+            if [[ "${billing_enabled}" != "True" ]]; then
+              echo "Project ${GCP_PROJECT_ID} has billing disabled (account: ${billing_account:-none})."
+              echo "Fix: relink an active billing account, or run this workflow with a different project/bucket/service inputs."
+              exit 1
+            fi
+            echo "Billing enabled for ${GCP_PROJECT_ID} (${billing_account})"
+          else
+            echo "Warning: could not verify billing state (insufficient permissions or API unavailable). Continuing."
+          fi
 
       - name: Make deploy script executable
         run: chmod +x ./infra/deploy-frontend.sh
