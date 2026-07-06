@@ -118,6 +118,16 @@ rsync -a --exclude='.DS_Store' --exclude='.git' --exclude='node_modules' \
   --exclude='assets/artifacts' \
   "$WEBINPUTS_ROOT/common/" "$TMPSTAGE/common/"
 
+# Validate that built bundles required by index.html actually exist in the staged artifact.
+# This prevents deploying shells that reference dist/main.js without a compiled bundle.
+if [[ -f "$TMPSTAGE/index.html" ]] && grep -q 'dist/main\.js' "$TMPSTAGE/index.html"; then
+  if [[ ! -f "$TMPSTAGE/dist/main.js" ]]; then
+    echo -e "${RED}Error: index.html references dist/main.js, but dist/main.js is missing for site '${SITE_NAME}'.${NC}"
+    echo -e "${YELLOW}Hint: build the site first (for example: cd $SITE_DIR && npm run build).${NC}"
+    exit 1
+  fi
+fi
+
 tar -czf "$TMPFILE" -C "$TMPSTAGE" .
 
 FILESIZE=$(du -h "$TMPFILE" | cut -f1)

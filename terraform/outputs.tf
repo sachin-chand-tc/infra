@@ -16,5 +16,7 @@ output "cloudflare_sachside_records" {
     planner  = cloudflare_record.sachside_planner.hostname
     app      = cloudflare_record.sachside_app.hostname
     sachins  = cloudflare_record.sachside_sachins.hostname
+    fifa     = cloudflare_record.sachside_fifa.hostname
+    fifa_www = cloudflare_record.sachside_fifa_www.hostname
   }
 }

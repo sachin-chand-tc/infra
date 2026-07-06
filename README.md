@@ -103,6 +103,7 @@ fresh files immediately.
 | `apnijodi` | apnijodi.com |
 | `planner` | planner.sachside.com (also app.sachside.com) |
 | `sachins` | sachins.sachside.com |
+| `fifa` | fifa.sachside.com |
 | `instascraper` | feedseeker.com |
 | `qrit` | qrit.com |
 
@@ -128,7 +129,7 @@ cd ~/code/repos/infra
 ### Deploy all sites at once
 
 ```bash
-for site in apnijodi planner sachins instascraper qrit; do
+for site in apnijodi planner sachins fifa instascraper qrit; do
   ./deploy-frontend.sh --site "$site" --redeploy
 done
 ```

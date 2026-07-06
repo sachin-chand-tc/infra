@@ -40,6 +40,8 @@ IMAGE_REGISTRY="${IMAGE_REGISTRY:-gcr.io}"
 IMAGE_REPO="${IMAGE_REPO:-$SERVICE_NAME}"
 IMAGE_TAG="${IMAGE_TAG:-}"
 ENV_VARS="${DEPLOY_ENV_VARS:-HTTP_PORT=8080,GRPC_PORT=9090,ENVIRONMENT=production,GCS_STATIC_BUCKET=starkindustries-og-static-an1}"
+CLOUD_RUN_MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES:-1}"
+CLOUD_RUN_MAX_INSTANCES="${CLOUD_RUN_MAX_INSTANCES:-50}"
 KEEP_IMAGE_DIGESTS="${KEEP_IMAGE_DIGESTS:-2}"
 KEEP_BUILD_RECORDS="${KEEP_BUILD_RECORDS:-2}"
 CLEANUP_OLD_IMAGES="${CLEANUP_OLD_IMAGES:-true}"
@@ -196,8 +198,8 @@ gcloud run deploy "${SERVICE_NAME}" \
   --allow-unauthenticated \
   --memory=512Mi \
   --cpu=1 \
-  --min-instances=0 \
-  --max-instances=10 \
+  --min-instances="${CLOUD_RUN_MIN_INSTANCES}" \
+  --max-instances="${CLOUD_RUN_MAX_INSTANCES}" \
   --port=8080 \
   --set-env-vars="$ENV_VARS" \
   $QUIET_FLAG
