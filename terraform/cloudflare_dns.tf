@@ -93,6 +93,22 @@ resource "cloudflare_record" "sachside_fifa_www" {
   proxied = false
 }
 
+resource "cloudflare_record" "sachside_qr" {
+  zone_id = data.cloudflare_zone.sachside.id
+  name    = "qr"
+  type    = "CNAME"
+  content = "ghs.googlehosted.com"
+  proxied = false
+}
+
+resource "cloudflare_record" "sachside_qr_www" {
+  zone_id = data.cloudflare_zone.sachside.id
+  name    = "www.qr"
+  type    = "CNAME"
+  content = "ghs.googlehosted.com"
+  proxied = false
+}
+
 # ── apnijodi.com ──────────────────────────────────────────────────────────────
 
 resource "cloudflare_record" "apnijodi_apex" {
