@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.sachside.qrit",
+      "sha256_cert_fingerprints": [
+        "PENDING_RELEASE_KEYSTORE_SHA256"
+      ]
+    }
+  }
+]
