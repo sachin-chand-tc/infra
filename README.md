@@ -7,8 +7,8 @@ for the following services:
 | Repo | What it is |
 |------|-----------|
 | `insta-scraper-backend` | Go server — serves all websites via host-based routing |
-| `webinputs` | Static frontend sites (`apnijodi`, `sachside`, `instascraper`, …) |
-| `qrit` | React frontend — upcoming app (backend will live in `insta-scraper-backend`) |
+| `webinputs` | Static frontend sites (`apnijodi`, `sachside`, `qrit`, …) |
+| `qrit` | React owner dashboard — live at `qr.sachside.com` |
 
 ---
 
@@ -16,7 +16,12 @@ for the following services:
 
 ```
 infra/
-├── .github/workflows/ci-cd.yml   CI/CD for the backend server
+├── .github/workflows/
+│   ├── ci-cd.yml                 CI/CD for the backend server (test + build + deploy)
+│   ├── frontend-publish-reusable.yml  Reusable workflow for any static site
+│   └── qrit-web-deploy.yml       CI/CD for qrit React app (test + build + deploy)
+├── well-known/
+│   └── assetlinks.json           Android App Links config (serve at /.well-known/assetlinks.json)
 ├── Dockerfile                    Docker build spec for the Go server
 ├── Makefile                      Convenience targets
 ├── deploy-backend.sh             Build & deploy Go server → Cloud Run
@@ -234,3 +239,45 @@ This starts the Go server on port `8080` and Prometheus on `9090`.
 The Go server matches the HTTP `Host` header to the correct extracted
 site folder and serves it as a static file tree with gzip, cache headers,
 and security headers applied automatically.
+
+---
+
+## GitHub Secrets Required
+
+Set these in the **infra repo → Settings → Secrets and variables → Actions**:
+
+| Secret | Used by | Description |
+|---|---|---|
+| `GCP_SA_KEY` | all workflows | GCP service account JSON key |
+| `PAT_TOKEN` | all workflows | GitHub PAT with `repo` scope |
+| `QRIT_API_BASE` | `qrit-web-deploy.yml` | Backend URL e.g. `https://api.sachside.com` |
+| `FIREBASE_API_KEY` | `qrit-web-deploy.yml` | Firebase project API key |
+| `FIREBASE_AUTH_DOMAIN` | `qrit-web-deploy.yml` | Firebase auth domain |
+| `FIREBASE_PROJECT_ID` | `qrit-web-deploy.yml` | Firebase project ID |
+| `FIREBASE_APP_ID` | `qrit-web-deploy.yml` | Firebase app ID |
+| `VAPID_PUBLIC_KEY` | `qrit-web-deploy.yml` | Web Push VAPID key (generate: `npx web-push generate-vapid-keys`) |
+
+---
+
+## Qrit Web CI/CD (`qrit-web-deploy.yml`)
+
+Triggered automatically on push to `main` when files under `qrit/` or `common/` change in the webinputs repo.
+Also available as a manual `workflow_dispatch` with `dry_run` and `webinputs_ref` inputs.
+
+**Pipeline steps:**
+1. Run Jest unit tests (`npm test -- --watchAll=false --coverage`)
+2. Build React production bundle (all `REACT_APP_*` env vars injected from secrets)
+3. Upload `qrit.tar.gz` to GCS
+4. Trigger Cloud Run redeploy
+
+---
+
+## Android App Links (`well-known/assetlinks.json`)
+
+The file at `infra/well-known/assetlinks.json` must be served at:
+```
+https://qr.sachside.com/.well-known/assetlinks.json
+```
+
+This tells Android to auto-open the Qrit native app (when installed) instead of the browser.
+Update `PENDING_RELEASE_KEYSTORE_SHA256` with the actual SHA-256 fingerprint from the release keystore when the Android app is published.

@@ -1,0 +1,151 @@
+name: Qrit Web — Deploy
+
+# Triggers on push to main for qrit frontend changes, or manual dispatch.
+# Runs tests → build → deploy to GCS + Cloud Run.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'qrit/**'           # webinputs repo path
+      - 'common/**'         # shared frontend utils
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate and build only, skip upload
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      webinputs_ref:
+        description: Git ref to deploy from webinputs repo
+        required: false
+        default: main
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  NODE_VERSION: '20'
+
+jobs:
+  test:
+    name: Test — Qrit Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: qrit
+
+    steps:
+      - name: Checkout webinputs
+        uses: actions/checkout@v4
+        with:
+          repository: sachin-chand-tc/webinputs
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ inputs.webinputs_ref || 'main' }}
+          path: .
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: qrit/package-lock.json
+
+      - name: Install dependencies
+        working-directory: qrit
+        run: npm ci
+
+      - name: Run unit tests
+        working-directory: qrit
+        run: npm test -- --watchAll=false --coverage --coverageReporters=text
+
+      - name: Build production bundle
+        working-directory: qrit
+        env:
+          # Inject env vars for CI build; real values come from Cloud Run at runtime
+          REACT_APP_QRIT_API_BASE: ${{ secrets.QRIT_API_BASE }}
+          REACT_APP_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          REACT_APP_FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          REACT_APP_FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          REACT_APP_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          REACT_APP_VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+        run: npm run build
+
+  deploy:
+    name: Deploy — Qrit Web
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != 'true')
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v4
+        with:
+          repository: sachin-chand-tc/infra
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: main
+          path: infra
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout webinputs
+        uses: actions/checkout@v4
+        with:
+          repository: sachin-chand-tc/webinputs
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ inputs.webinputs_ref || 'main' }}
+          path: webinputs
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: webinputs/qrit/package-lock.json
+
+      - name: Build Qrit production bundle
+        working-directory: webinputs/qrit
+        env:
+          REACT_APP_QRIT_API_BASE: ${{ secrets.QRIT_API_BASE }}
+          REACT_APP_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          REACT_APP_FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          REACT_APP_FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          REACT_APP_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          REACT_APP_VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+        run: npm ci && npm run build
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Make deploy script executable
+        run: chmod +x ./infra/deploy-frontend.sh
+
+      - name: Deploy qrit web to GCS + Cloud Run
+        env:
+          WEBINPUTS_ROOT: ${{ github.workspace }}/webinputs
+          GCP_PROJECT_ID: starkindustries-og
+          GCS_BUCKET: starkindustries-og-static-an1
+          CLOUD_RUN_SERVICE: feedseeker-website
+          REGION: asia-northeast1
+        run: ./infra/deploy-frontend.sh --site qrit --redeploy
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          {
+            echo "## Qrit Web Deploy"
+            echo "- Ref: ${{ inputs.webinputs_ref || github.sha }}"
+            echo "- Timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          } >> "$GITHUB_STEP_SUMMARY"
