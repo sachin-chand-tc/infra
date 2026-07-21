@@ -201,7 +201,7 @@ gcloud run deploy "${SERVICE_NAME}" \
   --min-instances="${CLOUD_RUN_MIN_INSTANCES}" \
   --max-instances="${CLOUD_RUN_MAX_INSTANCES}" \
   --port=8080 \
-  --set-env-vars="$ENV_VARS" \
+  --update-env-vars="$ENV_VARS" \
   $QUIET_FLAG
 
 # ── Print service URL ─────────────────────────────────────────
