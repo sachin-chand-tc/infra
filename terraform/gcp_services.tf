@@ -4,6 +4,9 @@ locals {
     "cloudbuild.googleapis.com",
     "containerregistry.googleapis.com",
     "run.googleapis.com",
+    "cloudscheduler.googleapis.com",
+    "firestore.googleapis.com",
+    "secretmanager.googleapis.com",
     "storage.googleapis.com",
   ])
 }

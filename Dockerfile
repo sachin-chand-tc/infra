@@ -17,6 +17,7 @@ COPY . .
 
 # Build the application statically without forcing a full rebuild on every deploy.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s" -o /app/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s" -o /app/qrit-chat-archive ./cmd/qrit-chat-archive
 
 # Final stage: distroless
 # Using static-debian12 as it contains SSL certificates and tzdata but no shell/package manager.
@@ -26,6 +27,7 @@ WORKDIR /
 
 # Copy the binary and config folder from builder
 COPY --from=builder /app/server /server
+COPY --from=builder /app/qrit-chat-archive /qrit-chat-archive
 COPY --from=builder /app/config /config
 
 # Expose HTTP and gRPC ports

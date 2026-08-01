@@ -1,10 +1,10 @@
 resource "google_cloud_run_v2_service" "backend" {
   provider = google-beta
 
-  name                = var.cloud_run_service
-  location            = var.region
-  project             = var.gcp_project_id
-  ingress             = "INGRESS_TRAFFIC_ALL"
+  name     = var.cloud_run_service
+  location = var.region
+  project  = var.gcp_project_id
+  ingress  = "INGRESS_TRAFFIC_ALL"
 
   template {
     scaling {
@@ -40,6 +40,19 @@ resource "google_cloud_run_v2_service" "backend" {
           value = env.value
         }
       }
+
+      dynamic "env" {
+        for_each = var.cloud_run_secret_env_vars
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value
+              version = "latest"
+            }
+          }
+        }
+      }
     }
   }
 
@@ -56,7 +69,17 @@ resource "google_cloud_run_v2_service" "backend" {
     ]
   }
 
-  depends_on = [google_project_service.required]
+  depends_on = [
+    google_project_service.required,
+    google_project_iam_member.cloud_run_secret_accessor,
+    google_storage_bucket_iam_member.qrit_chat_archive_writer,
+  ]
+}
+
+resource "google_project_iam_member" "cloud_run_secret_accessor" {
+  project = var.gcp_project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${var.cloud_run_service_account}"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "public_invoker" {

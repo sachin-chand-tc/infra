@@ -39,7 +39,8 @@ REGION="${REGION:-asia-northeast1}"
 IMAGE_REGISTRY="${IMAGE_REGISTRY:-gcr.io}"
 IMAGE_REPO="${IMAGE_REPO:-$SERVICE_NAME}"
 IMAGE_TAG="${IMAGE_TAG:-}"
-ENV_VARS="${DEPLOY_ENV_VARS:-HTTP_PORT=8080,GRPC_PORT=9090,ENVIRONMENT=production,GCS_STATIC_BUCKET=starkindustries-og-static-an1}"
+ENV_VARS="${DEPLOY_ENV_VARS:-HTTP_PORT=8080,GRPC_PORT=9090,ENVIRONMENT=production,FIREBASE_PROJECT_ID=starkindustries-og,GCS_STATIC_BUCKET=starkindustries-og-static-an1,QRIT_CHAT_ARCHIVE_BUCKET=starkindustries-og-qrit-chat-archives-an1,QRIT_EMAIL_FROM=QRIT <qr@sachside.com>}"
+QRIT_CHAT_ARCHIVE_JOB="${QRIT_CHAT_ARCHIVE_JOB:-qrit-chat-archive}"
 CLOUD_RUN_MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES:-1}"
 CLOUD_RUN_MAX_INSTANCES="${CLOUD_RUN_MAX_INSTANCES:-50}"
 KEEP_IMAGE_DIGESTS="${KEEP_IMAGE_DIGESTS:-2}"
@@ -203,6 +204,17 @@ gcloud run deploy "${SERVICE_NAME}" \
   --port=8080 \
   --update-env-vars="$ENV_VARS" \
   $QUIET_FLAG
+
+# Keep the archive compactor on the exact backend image. Secret bindings and
+# other job settings are managed by Terraform and remain unchanged.
+if gcloud run jobs describe "${QRIT_CHAT_ARCHIVE_JOB}" --region="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo -e "${BLUE}Updating QRIT archive job image...${NC}"
+  gcloud run jobs update "${QRIT_CHAT_ARCHIVE_JOB}" \
+    --image="$IMAGE_REF" \
+    --region="${REGION}" \
+    --project="${PROJECT_ID}" \
+    $QUIET_FLAG
+fi
 
 # ── Print service URL ─────────────────────────────────────────
 SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
