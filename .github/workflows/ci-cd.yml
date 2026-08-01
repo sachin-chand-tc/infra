@@ -15,7 +15,7 @@ env:
 jobs:
   # ── Test job runs against the app source code ──────────────
   test:
-    name: Test
+    name: Test — Backend
     runs-on: ubuntu-latest
     steps:
     - name: Check out app code
@@ -43,8 +43,15 @@ jobs:
     - name: Build
       run: go build ./...
 
-    - name: Run tests
+    - name: Run all tests
       run: go test -v ./...
+
+    - name: Run qrit notification + FCM tests (coverage)
+      run: |
+        go test -v -count=1 -coverprofile=coverage.out \
+          ./internal/qrit/... \
+          -run "TestFCM|TestIsTransient|TestNotification|TestChat"
+        go tool cover -func=coverage.out | grep -E "^total|fcm_sender|notification"
 
   # ── Deploy job builds Docker image using infra Dockerfile ──
   deploy:
