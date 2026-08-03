@@ -41,7 +41,7 @@ IMAGE_REPO="${IMAGE_REPO:-$SERVICE_NAME}"
 IMAGE_TAG="${IMAGE_TAG:-}"
 ENV_VARS="${DEPLOY_ENV_VARS:-HTTP_PORT=8080,GRPC_PORT=9090,ENVIRONMENT=production,FIREBASE_PROJECT_ID=starkindustries-og,GCS_STATIC_BUCKET=starkindustries-og-static-an1,QRIT_CHAT_ARCHIVE_BUCKET=starkindustries-og-qrit-chat-archives-an1,QRIT_EMAIL_FROM=QRIT <qr@sachside.com>}"
 QRIT_CHAT_ARCHIVE_JOB="${QRIT_CHAT_ARCHIVE_JOB:-qrit-chat-archive}"
-CLOUD_RUN_MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES:-1}"
+CLOUD_RUN_MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES:-0}"
 CLOUD_RUN_MAX_INSTANCES="${CLOUD_RUN_MAX_INSTANCES:-50}"
 KEEP_IMAGE_DIGESTS="${KEEP_IMAGE_DIGESTS:-2}"
 KEEP_BUILD_RECORDS="${KEEP_BUILD_RECORDS:-2}"
@@ -203,6 +203,15 @@ gcloud run deploy "${SERVICE_NAME}" \
   --max-instances="${CLOUD_RUN_MAX_INSTANCES}" \
   --port=8080 \
   --update-env-vars="$ENV_VARS" \
+  $QUIET_FLAG
+
+# Keep a single production target: remove preview tags and follow the latest revision.
+gcloud run services update-traffic "${SERVICE_NAME}" \
+  --platform=managed \
+  --region="${REGION}" \
+  --project="${PROJECT_ID}" \
+  --clear-tags \
+  --to-latest \
   $QUIET_FLAG
 
 # Keep the archive compactor on the exact backend image. Secret bindings and
