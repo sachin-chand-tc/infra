@@ -42,6 +42,21 @@ on:
         required: false
         default: false
         type: boolean
+      build_command:
+        description: Optional build run in webinputs/<site> before publishing (e.g. 'npm ci && npm run build')
+        required: false
+        default: ''
+        type: string
+      publish_dir:
+        description: Optional subfolder of the site holding the built files to publish (e.g. 'out'); defaults to the site folder itself
+        required: false
+        default: ''
+        type: string
+      node_version:
+        description: Node.js version for build_command
+        required: false
+        default: '22'
+        type: string
     secrets:
       GCP_SA_KEY:
         required: true
@@ -75,7 +90,7 @@ jobs:
       - name: Validate requested site
         run: |
           case "${{ inputs.site }}" in
-            apnijodi|sachside|planner|sachins|instascraper|qrit) ;;
+            apnijodi|sachside|planner|sachins|instascraper|qrit|fifa|screencreator) ;;
             *)
               echo "Unsupported site '${{ inputs.site }}'"
               exit 1
@@ -118,8 +133,14 @@ jobs:
 
       - name: Require entrypoint
         run: |
-          if [[ ! -f "webinputs/${{ inputs.site }}/index.html" ]]; then
-            echo "Missing required file: webinputs/${{ inputs.site }}/index.html"
+          # Built sites produce index.html during publish; they need a package.json instead.
+          if [[ -n "${{ inputs.build_command }}" ]]; then
+            required="webinputs/${{ inputs.site }}/package.json"
+          else
+            required="webinputs/${{ inputs.site }}/index.html"
+          fi
+          if [[ ! -f "$required" ]]; then
+            echo "Missing required file: $required"
             exit 1
           fi
 
@@ -165,6 +186,38 @@ jobs:
           path: webinputs
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Set up Node.js
+        if: inputs.build_command != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+          cache-dependency-path: webinputs/${{ inputs.site }}/package-lock.json
+
+      - name: Build site
+        if: inputs.build_command != ''
+        working-directory: webinputs/${{ inputs.site }}
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          BUILD_COMMAND: ${{ inputs.build_command }}
+        run: bash -euo pipefail -c "$BUILD_COMMAND"
+
+      - name: Promote publish directory
+        if: inputs.publish_dir != ''
+        env:
+          SITE: ${{ inputs.site }}
+          PUBLISH_DIR: ${{ inputs.publish_dir }}
+        run: |
+          set -euo pipefail
+          # deploy-frontend.sh publishes webinputs/<site>; swap the built output into that spot.
+          if [[ ! -f "webinputs/${SITE}/${PUBLISH_DIR}/index.html" ]]; then
+            echo "Missing webinputs/${SITE}/${PUBLISH_DIR}/index.html after build"
+            exit 1
+          fi
+          mv "webinputs/${SITE}" "${RUNNER_TEMP}/${SITE}-source"
+          mv "${RUNNER_TEMP}/${SITE}-source/${PUBLISH_DIR}" "webinputs/${SITE}"
+          echo "Publishing $(find "webinputs/${SITE}" -type f | wc -l | tr -d ' ') files from ${SITE}/${PUBLISH_DIR}"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -229,6 +282,7 @@ jobs:
             echo "- Source ref: ${{ inputs.webinputs_ref }}"
             echo "- Dry run: ${{ inputs.dry_run }}"
             echo "- Redeploy: ${{ inputs.redeploy }}"
+            echo "- Build: ${{ inputs.build_command || 'none' }}${{ inputs.publish_dir && format(' → {0}/', inputs.publish_dir) || '' }}"
             echo "- GCS object: gs://${{ env.GCS_BUCKET }}/${{ inputs.site }}.tar.gz"
             echo "- Timestamp (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           } >> "$GITHUB_STEP_SUMMARY"
