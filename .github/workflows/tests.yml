@@ -1,0 +1,27 @@
+name: Infra script tests
+
+# The deploy scripts guard production; test them on every change.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Deploy script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax
+        run: |
+          bash -n deploy-frontend.sh
+          bash -n deploy-backend.sh
+          bash -n scripts/setup-backend-ci.sh
+      - name: deploy-frontend.sh
+        run: bash tests/deploy-frontend.test.sh
+      - name: deploy-backend.sh
+        run: bash tests/deploy-backend.test.sh

@@ -17,15 +17,17 @@ for the following services:
 ```
 infra/
 ├── .github/workflows/
-│   ├── ci-cd.yml                 CI/CD for the backend server (test + build + deploy)
-│   ├── frontend-publish-reusable.yml  Reusable workflow for any static site
-│   └── qrit-web-deploy.yml       CI/CD for qrit React app (test + build + deploy)
+│   ├── backend-deploy-reusable.yml   Backend test + guarded deploy (called by insta-scraper-backend)
+│   ├── frontend-publish-reusable.yml Frontend publish (called by webinputs)
+│   └── tests.yml                     Tests for the deploy scripts
 ├── well-known/
 │   └── assetlinks.json           Android App Links config (serve at /.well-known/assetlinks.json)
 ├── Dockerfile                    Docker build spec for the Go server
 ├── Makefile                      Convenience targets
 ├── deploy-backend.sh             Build & deploy Go server → Cloud Run
 ├── deploy-frontend.sh            Package & upload a static site → GCS
+├── scripts/setup-backend-ci.sh   One-time: let insta-scraper-backend deploy itself
+├── tests/                        deploy-*.test.sh (stub gcloud, no cloud access)
 ├── docker-compose.yml            Local dev environment
 ├── k8s/                          Kubernetes manifests
 └── prometheus.yml                Metrics scrape config
@@ -97,97 +99,113 @@ export GCP_PROJECT_ID=starkindustries-og
 
 ## 2 · Deploy a Frontend Site
 
-`deploy-frontend.sh` tarballs a site folder from `../webinputs/<site>/`,
-uploads it to GCS, and optionally restarts Cloud Run so it picks up the
-fresh files immediately.
+`deploy-frontend.sh` tarballs a site folder from `../webinputs/<site>/` (plus
+`common/`) and uploads it to GCS. **That's the whole deploy.** The Go server
+checks every archive's GCS generation every 15 s and swaps in any that
+changed, atomically, without a restart. No Cloud Run redeploy is needed.
+
+Every upload records where it came from:
+- GCS metadata on the archive: `commit`, `source_tree`, `ref`, `run_url`, `published_at`
+- `__deploy.json` inside it, served at `https://<site host>/__deploy.json` (never cached)
+
+**Rollback guard.** Before uploading, the script compares the live archive's
+commit with yours. If the live site has commits touching `<site>/` or
+`common/` that your checkout lacks (for example, a branch published by hand
+that main never got), it refuses and lists them. `--force` overrides, for a
+deliberate rollback.
 
 ### Available sites
 
-| Site name | Domain |
-|-----------|--------|
-| `apnijodi` | apnijodi.com |
-| `planner` | planner.sachside.com (also app.sachside.com) |
-| `sachins` | sachins.sachside.com |
-| `fifa` | fifa.sachside.com |
-| `instascraper` | feedseeker.com |
-| `qrit` | qrit.com |
+| Site name | Archive | Domain |
+|-----------|---------|--------|
+| `apnijodi` | `apnijodi.tar.gz` | apnijodi.com |
+| `planner` | `planner.tar.gz` | planner.sachside.com (also app.sachside.com) |
+| `sachins` | `sachins.tar.gz` | sachins.sachside.com |
+| `fifa` | `fifa.tar.gz` | fifa.sachside.com |
+| `instascraper` | `insta-scraper.tar.gz` | feedseeker.com |
+| `qrit` | `qrit.tar.gz` | qr.sachside.com |
+| `sachside` | `sachside.tar.gz` | sachside.com (the server redirects it to planner) |
 
-### Deploy a site (basic)
+The archive name must match `gcs_path` in the backend's `config/production.yaml`.
+
+### Usually: let CI do it
+
+Merging to webinputs `main` publishes every site whose source differs from
+what's live. You can also run **Publish Frontends** by hand from the Actions
+tab, on any branch (the guard still applies).
+
+### By hand
 
 ```bash
 cd ~/code/repos/infra
-./deploy-frontend.sh --site apnijodi
+./deploy-frontend.sh --site planner --check                 # what's live vs this checkout
+./deploy-frontend.sh --site planner --dry-run               # build the archive, list it, upload nothing
+./deploy-frontend.sh --site planner --verify-url https://planner.sachside.com
 ```
 
-### Deploy and force Cloud Run to reload immediately
-
-```bash
-./deploy-frontend.sh --site apnijodi --redeploy
-```
-
-### Dry run — pack and verify without uploading
-
-```bash
-./deploy-frontend.sh --site apnijodi --dry-run
-```
-
-### Deploy all sites at once
-
-```bash
-for site in apnijodi planner sachins fifa instascraper qrit; do
-  ./deploy-frontend.sh --site "$site" --redeploy
-done
-```
+The checkout must be clean (`--allow-dirty` overrides), and `WEBINPUTS_ROOT`
+must be a git checkout, or else set `DEPLOY_COMMIT` and `DEPLOY_SOURCE_TREE`.
 
 ### All flags
 
 | Flag | Description |
 |------|-------------|
 | `--site <name>` | **Required.** Site folder under `../webinputs/` |
-| `--redeploy` | After upload, bumps `DEPLOY_TIMESTAMP` env var on Cloud Run to trigger a new revision |
-| `--dry-run` | Creates the tarball and verifies it, but skips the GCS upload |
+| `--check` | Print the live state (`missing`, `unknown`, `current`, `ahead`, `behind`, `foreign`) and exit |
+| `--dry-run` | Build and list the archive, skip the upload |
+| `--verify-url <url>` | After upload, wait until `<url>/__deploy.json` shows this upload |
+| `--force` | Publish even though it rolls back live changes |
+| `--allow-dirty` | Publish with uncommitted changes in the site or `common/` |
+| `--redeploy` | Deprecated: also forces a new Cloud Run revision |
 
-### Environment variables (all optional — have defaults)
+### Environment variables (all optional)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `WEBINPUTS_ROOT` | `../webinputs` | webinputs checkout to publish from |
 | `GCP_PROJECT_ID` | `starkindustries-og` | GCP project |
 | `GCS_BUCKET` | `starkindustries-og-static-an1` | Target GCS bucket |
-| `CLOUD_RUN_SERVICE` | `feedseeker-website` | Cloud Run service to redeploy |
-| `REGION` | `asia-northeast1` | GCP region |
+| `GCS_OBJECT_NAME` | per the table above | Archive name without `.tar.gz` |
+| `VERIFY_TIMEOUT` | `300` | Seconds `--verify-url` waits |
 
-### Override bucket (e.g. for staging)
-
-```bash
-GCS_BUCKET=my-staging-bucket ./deploy-frontend.sh --site apnijodi --dry-run
-```
+Tests: `bash tests/deploy-frontend.test.sh`.
 
 ---
 
 ## 3 · CI/CD (GitHub Actions)
 
-`.github/workflows/ci-cd.yml` runs automatically on every push to `main`
-in **this** repo (infra). It:
+### Frontends: webinputs → `frontend-publish-reusable.yml`
 
-1. Checks out `insta-scraper-backend` app source into `./app`
-2. Runs Go tests against the app source
-3. Calls the same `deploy-backend.sh` script used locally
-4. Builds in Cloud Build and deploys to Cloud Run
+webinputs' **Publish Frontends** workflow plans each run from live state, not
+from the push's diff:
 
-### Required GitHub Secrets
+| Live archive | On push to main |
+|---|---|
+| built from the same source (`current`) | skip |
+| older than main (`ahead`) | publish |
+| no metadata yet (`unknown`) | publish if the push changed the site |
+| has site commits main lacks (`behind`, `foreign`) | **block**: the run fails and lists the commits |
 
-Set these in the `infra` repo → Settings → Secrets → Actions:
+A cancelled or failed run can't lose a publish: the next run sees the
+difference and publishes it. Each publish waits until the live site serves
+the new `__deploy.json`. The reusable workflow needs only `GCP_SA_KEY`;
+webinputs is read with the caller's token and this repo is public.
 
-| Secret | Description |
-|--------|-------------|
-| `GCP_SA_KEY` | JSON key for a GCP service account with Cloud Run + GCR permissions |
-| `PAT_TOKEN` | GitHub Personal Access Token with `repo` scope (to checkout `insta-scraper-backend`) |
-| `FIREBASE_PROJECT_ID` | Firebase project ID for the Go server |
+### Backend: insta-scraper-backend → `backend-deploy-reusable.yml`
 
-### Trigger manually
+insta-scraper-backend's `.github/workflows/deploy.yml` calls it:
+- pull request: `go build` + `go test`
+- push to `main`: tests, then `deploy-backend.sh` for that commit
+- manual run (any branch): tests, then a deploy unless `dry_run`; `force` allows a rollback
 
-You can also trigger CI from the GitHub Actions tab → select
-**"CI/CD — Backend Server"** → **Run workflow**.
+`deploy-backend.sh` refuses to deploy if Cloud Run's current image (tag
+`<sha>-<timestamp>`) holds a commit the new one lacks, or if the checkout has
+uncommitted or untracked files. `FORCE=true` / `ALLOW_DIRTY=true` override.
+Pushing to *this* repo deploys nothing.
+
+**One-time setup** (needs a project owner): `bash scripts/setup-backend-ci.sh`.
+It gives the `github-actions` service account Cloud Build Editor and stores a
+key as the backend repo's `GCP_SA_KEY` secret.
 
 ---
 
@@ -244,31 +262,12 @@ and security headers applied automatically.
 
 ## GitHub Secrets Required
 
-Set these in the **infra repo → Settings → Secrets and variables → Actions**:
-
-| Secret | Used by | Description |
+| Repo | Secret | Description |
 |---|---|---|
-| `GCP_SA_KEY` | all workflows | GCP service account JSON key |
-| `PAT_TOKEN` | all workflows | GitHub PAT with `repo` scope |
-| `QRIT_API_BASE` | `qrit-web-deploy.yml` | Backend URL e.g. `https://api.sachside.com` |
-| `FIREBASE_API_KEY` | `qrit-web-deploy.yml` | Firebase project API key |
-| `FIREBASE_AUTH_DOMAIN` | `qrit-web-deploy.yml` | Firebase auth domain |
-| `FIREBASE_PROJECT_ID` | `qrit-web-deploy.yml` | Firebase project ID |
-| `FIREBASE_APP_ID` | `qrit-web-deploy.yml` | Firebase app ID |
-| `VAPID_PUBLIC_KEY` | `qrit-web-deploy.yml` | Web Push VAPID key (generate: `npx web-push generate-vapid-keys`) |
+| webinputs | `GCP_SA_KEY` | Key for `gha-frontend-publisher` (object admin on the static bucket) |
+| insta-scraper-backend | `GCP_SA_KEY` | Key for `github-actions` (Cloud Build, Cloud Run, GCR); see `scripts/setup-backend-ci.sh` |
 
----
-
-## Qrit Web CI/CD (`qrit-web-deploy.yml`)
-
-Triggered automatically on push to `main` when files under `qrit/` or `common/` change in the webinputs repo.
-Also available as a manual `workflow_dispatch` with `dry_run` and `webinputs_ref` inputs.
-
-**Pipeline steps:**
-1. Run Jest unit tests (`npm test -- --watchAll=false --coverage`)
-2. Build React production bundle (all `REACT_APP_*` env vars injected from secrets)
-3. Upload `qrit.tar.gz` to GCS
-4. Trigger Cloud Run redeploy
+`PAT_TOKEN` is no longer needed by either pipeline.
 
 ---
 
