@@ -33,10 +33,20 @@ on:
         default: main
         type: string
       redeploy:
-        description: Force Cloud Run redeploy after upload
+        description: "Deprecated: also force a new Cloud Run revision. Not needed; the server picks up new archives within 15 s"
         required: false
-        default: true
+        default: false
         type: boolean
+      force:
+        description: Publish even if the live site has commits this ref lacks (rolls them back)
+        required: false
+        default: false
+        type: boolean
+      site_url:
+        description: Public URL of the site (e.g. https://planner.sachside.com); when set, the job waits until it serves this upload
+        required: false
+        default: ''
+        type: string
       dry_run:
         description: Validate/package only, skip upload
         required: false
@@ -52,6 +62,11 @@ on:
         required: false
         default: ''
         type: string
+      infra_ref:
+        description: Ref of sachin-chand-tc/infra whose deploy scripts to use (for testing an infra branch)
+        required: false
+        default: main
+        type: string
       node_version:
         description: Node.js version for build_command
         required: false
@@ -61,13 +76,17 @@ on:
       GCP_SA_KEY:
         required: true
       PAT_TOKEN:
-        required: true
+        # Unused: webinputs is read with the caller's own token and infra is
+        # public. Kept so existing callers that pass it don't break.
+        required: false
 
 permissions:
   contents: read
 
+# One publish per site at a time, whatever the ref, so two runs can't race
+# and leave an older upload live. (The rollback guard also re-checks.)
 concurrency:
-  group: frontend-publish-${{ inputs.site }}-${{ inputs.webinputs_ref }}
+  group: frontend-publish-${{ inputs.gcs_bucket }}-${{ inputs.site }}
   cancel-in-progress: false
 
 defaults:
@@ -101,7 +120,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: sachin-chand-tc/webinputs
-          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ inputs.webinputs_ref }}
           path: webinputs
           fetch-depth: 1
@@ -156,14 +174,10 @@ jobs:
       - name: Preflight required secrets
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           set -euo pipefail
-          missing=()
-          [[ -z "${GCP_SA_KEY}" ]] && missing+=("GCP_SA_KEY")
-          [[ -z "${PAT_TOKEN}" ]] && missing+=("PAT_TOKEN")
-          if (( ${#missing[@]} > 0 )); then
-            echo "Missing required workflow_call secret(s): ${missing[*]}"
+          if [[ -z "${GCP_SA_KEY}" ]]; then
+            echo "Missing required workflow_call secret: GCP_SA_KEY"
             exit 1
           fi
 
@@ -171,20 +185,20 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: sachin-chand-tc/infra
-          token: ${{ secrets.PAT_TOKEN }}
-          ref: main
+          ref: ${{ inputs.infra_ref }}
           path: infra
           fetch-depth: 1
           persist-credentials: false
 
+      # Full history: the rollback guard checks that the live site's commit
+      # is contained in the one being published.
       - name: Checkout webinputs
         uses: actions/checkout@v4
         with:
           repository: sachin-chand-tc/webinputs
-          token: ${{ secrets.PAT_TOKEN }}
           ref: ${{ inputs.webinputs_ref }}
           path: webinputs
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
@@ -262,6 +276,9 @@ jobs:
           GCS_BUCKET: ${{ env.GCS_BUCKET }}
           CLOUD_RUN_SERVICE: ${{ env.CLOUD_RUN_SERVICE }}
           REGION: ${{ env.REGION }}
+          DEPLOY_REF: ${{ github.ref_name }}
+          DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SITE_URL: ${{ inputs.site_url }}
         run: |
           set -euo pipefail
           EXTRA_FLAGS=()
@@ -270,6 +287,12 @@ jobs:
           fi
           if [[ "${{ inputs.dry_run }}" == "true" ]]; then
             EXTRA_FLAGS+=(--dry-run)
+          fi
+          if [[ "${{ inputs.force }}" == "true" ]]; then
+            EXTRA_FLAGS+=(--force)
+          fi
+          if [[ -n "${SITE_URL}" && "${{ inputs.dry_run }}" != "true" ]]; then
+            EXTRA_FLAGS+=(--verify-url "${SITE_URL}")
           fi
           ./infra/deploy-frontend.sh --site "${{ inputs.site }}" "${EXTRA_FLAGS[@]}"
 
@@ -281,8 +304,9 @@ jobs:
             echo "- Site: ${{ inputs.site }}"
             echo "- Source ref: ${{ inputs.webinputs_ref }}"
             echo "- Dry run: ${{ inputs.dry_run }}"
-            echo "- Redeploy: ${{ inputs.redeploy }}"
+            echo "- Forced: ${{ inputs.force }}"
+            echo "- Verified at: ${{ inputs.site_url || 'not checked (no site_url)' }}"
             echo "- Build: ${{ inputs.build_command || 'none' }}${{ inputs.publish_dir && format(' → {0}/', inputs.publish_dir) || '' }}"
-            echo "- GCS object: gs://${{ env.GCS_BUCKET }}/${{ inputs.site }}.tar.gz"
+            echo "- Bucket: gs://${{ env.GCS_BUCKET }} (archive name and commit are in the deploy log)"
             echo "- Timestamp (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,147 @@
+name: Backend Deploy Reusable
+
+# Called from insta-scraper-backend's .github/workflows/deploy.yml:
+#   - pull requests: test only
+#   - push to main: test, then deploy that exact commit to Cloud Run
+#   - workflow_dispatch: test, then deploy the chosen ref (or just test)
+#
+# deploy-backend.sh refuses to deploy a commit that doesn't contain the one
+# production runs now (a rollback), or a dirty checkout. `force` overrides the
+# first, for an intentional rollback.
+
+on:
+  workflow_call:
+    inputs:
+      deploy:
+        description: Build and deploy after the tests pass
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: Deploy even if production runs commits this ref lacks (rolls them back)
+        required: false
+        default: false
+        type: boolean
+      infra_ref:
+        description: Ref of sachin-chand-tc/infra whose deploy scripts to use (for testing an infra branch)
+        required: false
+        default: main
+        type: string
+      gcp_project_id:
+        required: false
+        default: starkindustries-og
+        type: string
+      cloud_run_service:
+        required: false
+        default: feedseeker-website
+        type: string
+      region:
+        required: false
+        default: asia-northeast1
+        type: string
+    secrets:
+      GCP_SA_KEY:
+        description: Service account key with Cloud Build, Cloud Run and GCR access (needed only to deploy)
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out backend
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test -count=1 ./...
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: test
+    if: inputs.deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # One deploy at a time; a newer queued deploy replaces an older queued one.
+    concurrency:
+      group: backend-deploy-${{ inputs.gcp_project_id }}-${{ inputs.cloud_run_service }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Preflight secrets
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          if [[ -z "$GCP_SA_KEY" ]]; then
+            {
+              echo "## Backend deploy blocked: GCP_SA_KEY is not set"
+              echo "Add it to insta-scraper-backend's Actions secrets. infra/scripts/setup-backend-ci.sh does this in one go."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::GCP_SA_KEY secret is missing in insta-scraper-backend (run infra/scripts/setup-backend-ci.sh)"
+            exit 1
+          fi
+
+      # Full history so the rollback guard can tell whether production's
+      # commit is contained in this one, whatever branch it was deployed from.
+      - name: Check out backend
+        uses: actions/checkout@v4
+        with:
+          path: app
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out infra
+        uses: actions/checkout@v4
+        with:
+          repository: sachin-chand-tc/infra
+          ref: ${{ inputs.infra_ref }}
+          path: infra
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy via shared script
+        env:
+          APP_ROOT: ${{ github.workspace }}/app
+          GCP_PROJECT_ID: ${{ inputs.gcp_project_id }}
+          CLOUD_RUN_SERVICE: ${{ inputs.cloud_run_service }}
+          REGION: ${{ inputs.region }}
+          FORCE: ${{ inputs.force }}
+          QUIET: 'true'
+          BUILD_LOGS: 'false'
+        run: bash ./infra/deploy-backend.sh
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          image="$(gcloud run services describe "${{ inputs.cloud_run_service }}" \
+            --region "${{ inputs.region }}" --project "${{ inputs.gcp_project_id }}" \
+            --format='value(spec.template.spec.containers[0].image)')"
+          {
+            echo "## Backend deployed"
+            echo "- Commit: \`${{ github.sha }}\` (${{ github.ref_name }})"
+            echo "- Image: \`${image}\`"
+            echo "- Forced: ${{ inputs.force }}"
+          } >> "$GITHUB_STEP_SUMMARY"
